@@ -32,20 +32,33 @@ type NavigationMilestoneProbe = {
   stop: () => void
 }
 
-function hasStableNavigationMilestones() {
-  const samples = (window as Window & { __navigationMilestones?: NavigationMilestoneProbe }).__navigationMilestones
-    ?.samples
-  return (
-    samples !== undefined &&
-    samples.length >= 3 &&
-    samples.slice(-3).every((sample) => Object.values(sample.milestones).every(Boolean))
-  )
-}
+export async function measureNavigationMilestones(
+  page: Page,
+  input: {
+    triggerSelector: string
+    milestones: Record<string, { selector: string; visible?: boolean }>
+    navigate: () => Promise<void>
+  },
+) {
+  await page.evaluate(setupNavigationMilestoneTracking, {
+    triggerSelector: input.triggerSelector,
+    milestones: input.milestones,
+  })
+  await input.navigate()
 
-function stopNavigationMilestoneProbe() {
-  const probe = (window as Window & { __navigationMilestones?: NavigationMilestoneProbe }).__navigationMilestones!
-  probe.stop()
-  return probe.samples
+  await page.waitForFunction(() => {
+    const samples = (window as Window & { __navigationMilestones?: NavigationMilestoneProbe }).__navigationMilestones
+      ?.samples
+    if (!samples || samples.length < 3) return false
+    return samples.slice(-3).every((sample) => Object.values(sample.milestones).every(Boolean))
+  })
+  const samples = await page.evaluate(() => {
+    const probe = (window as Window & { __navigationMilestones?: NavigationMilestoneProbe }).__navigationMilestones!
+    probe.stop()
+    return probe.samples
+  })
+
+  return { summary: summarizeNavigationMilestones(samples), samples }
 }
 
 function setupNavigationMilestoneTracking(input: {
@@ -137,24 +150,4 @@ function setupNavigationMilestoneTracking(input: {
       running = false
     },
   }
-}
-
-export async function measureNavigationMilestones(
-  page: Page,
-  input: {
-    triggerSelector: string
-    milestones: Record<string, { selector: string; visible?: boolean }>
-    navigate: () => Promise<void>
-  },
-) {
-  await page.evaluate(setupNavigationMilestoneTracking, {
-    triggerSelector: input.triggerSelector,
-    milestones: input.milestones,
-  })
-  await input.navigate()
-
-  await page.waitForFunction(hasStableNavigationMilestones)
-  const samples = await page.evaluate(stopNavigationMilestoneProbe)
-
-  return { summary: summarizeNavigationMilestones(samples), samples }
 }
