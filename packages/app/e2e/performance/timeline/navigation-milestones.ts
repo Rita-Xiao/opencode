@@ -62,7 +62,7 @@ export async function measureNavigationMilestones(
           ]),
         )
       
-      const updateMarks = (current: Record<string, boolean>) => {
+      const updateMilestoneStreaks = (current: Record<string, boolean>) => {
         Object.entries(current).forEach(([name, value]) => {
           if (!value) {
             streaks.set(name, 0)
@@ -77,40 +77,34 @@ export async function measureNavigationMilestones(
           if (streak === 3) performance.mark(`opencode.navigation.${name}.stable`)
         })
       }
-      
+
+      const updateAllMilestoneMarks = (current: Record<string, boolean>) => {
+        const all = Object.values(current).every(Boolean)
+        const allStreak = all ? (streaks.get("all") ?? 0) + 1 : 0
+        streaks.set("all", allStreak)
+        if (all && !marked.has("all.first")) {
+          performance.mark("opencode.navigation.all.first")
+          marked.add("all.first")
+        }
+        if (allStreak === 3) {
+          performance.mark("opencode.navigation.all.stable")
+        }
+      }
+            
       const sample = () => {
         if (!running || started === undefined) return
         requestAnimationFrame(() => {
           setTimeout(() => {
             if (!running || started === undefined) return            
             const current = getCurrentMilestones()
+            
             samples.push({
               observedAtMs: performance.now() - started,
               milestones: current,
             })
-            // Object.entries(current).forEach(([name, value]) => {
-            //   if (!value) {
-            //     streaks.set(name, 0)
-            //     return
-            //   }
-            //   if (!marked.has(`${name}.first`)) {
-            //     performance.mark(`opencode.navigation.${name}.first`)
-            //     marked.add(`${name}.first`)
-            //   }
-            //   const streak = (streaks.get(name) ?? 0) + 1
-            //   streaks.set(name, streak)
-            //   if (streak === 3) performance.mark(`opencode.navigation.${name}.stable`)
-            // })
-            updateMarks(current)
-
-            const all = Object.values(current).every(Boolean)
-            const allStreak = all ? (streaks.get("all") ?? 0) + 1 : 0
-            streaks.set("all", allStreak)
-            if (all && !marked.has("all.first")) {
-              performance.mark("opencode.navigation.all.first")
-              marked.add("all.first")
-            }
-            if (allStreak === 3) performance.mark("opencode.navigation.all.stable")
+            
+            updateMilestoneStreaks(current)
+            updateAllMilestoneMarks(current)
             sample()
           }, 0)
         })
