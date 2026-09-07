@@ -53,34 +53,56 @@ export async function measureNavigationMilestones(
           const style = getComputedStyle(element)
           return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none"
         })
+      
+      const getCurrentMilestones = () => 
+        Object.fromEntries(
+          Object.entries(milestones).map(([name, milestone]) => [
+            name,
+            milestone.visible === false ? !document.querySelector(milestone.selector) : visible(milestone.selector),
+          ]),
+        )
+      
+      const updateMarks = (current: Record<string, boolean>) => {
+        Object.entries(current).forEach(([name, value]) => {
+          if (!value) {
+            streaks.set(name, 0)
+            return
+          }
+          if (!marked.has(`${name}.first`)) {
+            performance.mark(`opencode.navigation.${name}.first`)
+            marked.add(`${name}.first`)
+          }
+          const streak = (streaks.get(name) ?? 0) + 1
+          streaks.set(name, streak)
+          if (streak === 3) performance.mark(`opencode.navigation.${name}.stable`)
+        })
+      }
+      
       const sample = () => {
         if (!running || started === undefined) return
         requestAnimationFrame(() => {
           setTimeout(() => {
-            if (!running || started === undefined) return
-            const current = Object.fromEntries(
-              Object.entries(milestones).map(([name, milestone]) => [
-                name,
-                milestone.visible === false ? !document.querySelector(milestone.selector) : visible(milestone.selector),
-              ]),
-            )
+            if (!running || started === undefined) return            
+            const current = getCurrentMilestones()
             samples.push({
               observedAtMs: performance.now() - started,
               milestones: current,
             })
-            Object.entries(current).forEach(([name, value]) => {
-              if (!value) {
-                streaks.set(name, 0)
-                return
-              }
-              if (!marked.has(`${name}.first`)) {
-                performance.mark(`opencode.navigation.${name}.first`)
-                marked.add(`${name}.first`)
-              }
-              const streak = (streaks.get(name) ?? 0) + 1
-              streaks.set(name, streak)
-              if (streak === 3) performance.mark(`opencode.navigation.${name}.stable`)
-            })
+            // Object.entries(current).forEach(([name, value]) => {
+            //   if (!value) {
+            //     streaks.set(name, 0)
+            //     return
+            //   }
+            //   if (!marked.has(`${name}.first`)) {
+            //     performance.mark(`opencode.navigation.${name}.first`)
+            //     marked.add(`${name}.first`)
+            //   }
+            //   const streak = (streaks.get(name) ?? 0) + 1
+            //   streaks.set(name, streak)
+            //   if (streak === 3) performance.mark(`opencode.navigation.${name}.stable`)
+            // })
+            updateMarks(current)
+
             const all = Object.values(current).every(Boolean)
             const allStreak = all ? (streaks.get("all") ?? 0) + 1 : 0
             streaks.set("all", allStreak)
