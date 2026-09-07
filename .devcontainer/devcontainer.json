@@ -31,10 +31,12 @@
 			"label": "Hello Remote World",
 			"onAutoForward": "notify"
 		}
-	}
+	},
 
 	// Use 'postCreateCommand' to run commands after the container is created.
-	// "postCreateCommand": "bun install"
+	"postCreateCommand": ["bun install", "curl https://qlty.sh | bash", "qlty init"]
+	
+
 
 	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
 	// "remoteUser": "root"
