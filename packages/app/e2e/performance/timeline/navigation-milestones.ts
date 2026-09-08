@@ -32,6 +32,26 @@ type NavigationMilestoneProbe = {
   stop: () => void
 }
 
+type NavigationMilestoneHelpers = {
+  getCurrentMilestones: (milestones: Record<string, { selector: string; visible?: boolean }>) => Record<string, boolean>
+  updateMilestoneStreak: (input: {
+    name: string
+    value: boolean
+    streaks: Map<string, number>
+    marked: Set<string>
+  }) => void
+  updateAllMilestoneMarks: (input: {
+    current: Record<string, boolean>
+    streaks: Map<string, number>
+    marked: Set<string>
+  }) => void
+}
+
+type NavigationMilestoneWindow = Window & {
+  __navigationMilestoneHelpers?: NavigationMilestoneHelpers
+  __navigationMilestones?: NavigationMilestoneProbe
+}
+
 export async function measureNavigationMilestones(
   page: Page,
   input: {
@@ -40,6 +60,7 @@ export async function measureNavigationMilestones(
     navigate: () => Promise<void>
   },
 ) {
+  await page.evaluate(setupNavigationMilestoneHelpers)
   await page.evaluate(setupNavigationMilestoneTracking, {
     triggerSelector: input.triggerSelector,
     milestones: input.milestones,
@@ -61,16 +82,7 @@ export async function measureNavigationMilestones(
   return { summary: summarizeNavigationMilestones(samples), samples }
 }
 
-function setupNavigationMilestoneTracking(input: {
-  triggerSelector: string
-  milestones: Record<string, { selector: string; visible?: boolean }>
-}) {
-  const samples: NavigationMilestoneSample[] = []
-  const streaks = new Map<string, number>()
-  const marked = new Set<string>()
-  let started: number | undefined
-  let running = true
-
+function setupNavigationMilestoneHelpers() {
   const visible = (selector: string) =>
     [...document.querySelectorAll<HTMLElement>(selector)].some((element) => {
       const rect = element.getBoundingClientRect()
@@ -78,42 +90,53 @@ function setupNavigationMilestoneTracking(input: {
       return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none"
     })
 
-  const getCurrentMilestones = () =>
-    Object.fromEntries(
-      Object.entries(input.milestones).map(([name, milestone]) => [
-        name,
-        milestone.visible === false ? !document.querySelector(milestone.selector) : visible(milestone.selector),
-      ]),
-    )
-
-  const updateMilestoneStreaks = (current: Record<string, boolean>) => {
-    Object.entries(current).forEach(([name, value]) => {
-      if (!value) {
-        streaks.set(name, 0)
+  ;(window as NavigationMilestoneWindow).__navigationMilestoneHelpers = {
+    getCurrentMilestones(milestones) {
+      return Object.fromEntries(
+        Object.entries(milestones).map(([name, milestone]) => [
+          name,
+          milestone.visible === false ? !document.querySelector(milestone.selector) : visible(milestone.selector),
+        ]),
+      )
+    },
+    updateMilestoneStreak(input) {
+      if (!input.value) {
+        input.streaks.set(input.name, 0)
         return
       }
-      if (!marked.has(`${name}.first`)) {
-        performance.mark(`opencode.navigation.${name}.first`)
-        marked.add(`${name}.first`)
+      if (!input.marked.has(`${input.name}.first`)) {
+        performance.mark(`opencode.navigation.${input.name}.first`)
+        input.marked.add(`${input.name}.first`)
       }
-      const streak = (streaks.get(name) ?? 0) + 1
-      streaks.set(name, streak)
-      if (streak === 3) performance.mark(`opencode.navigation.${name}.stable`)
-    })
+      const streak = (input.streaks.get(input.name) ?? 0) + 1
+      input.streaks.set(input.name, streak)
+      if (streak === 3) performance.mark(`opencode.navigation.${input.name}.stable`)
+    },
+    updateAllMilestoneMarks(input) {
+      const all = Object.values(input.current).every(Boolean)
+      const allStreak = all ? (input.streaks.get("all") ?? 0) + 1 : 0
+      input.streaks.set("all", allStreak)
+      if (all && !input.marked.has("all.first")) {
+        performance.mark("opencode.navigation.all.first")
+        input.marked.add("all.first")
+      }
+      if (allStreak === 3) {
+        performance.mark("opencode.navigation.all.stable")
+      }
+    },
   }
+}
 
-  const updateAllMilestoneMarks = (current: Record<string, boolean>) => {
-    const all = Object.values(current).every(Boolean)
-    const allStreak = all ? (streaks.get("all") ?? 0) + 1 : 0
-    streaks.set("all", allStreak)
-    if (all && !marked.has("all.first")) {
-      performance.mark("opencode.navigation.all.first")
-      marked.add("all.first")
-    }
-    if (allStreak === 3) {
-      performance.mark("opencode.navigation.all.stable")
-    }
-  }
+function setupNavigationMilestoneTracking(input: {
+  triggerSelector: string
+  milestones: Record<string, { selector: string; visible?: boolean }>
+}) {
+  const samples: NavigationMilestoneSample[] = []
+  const streaks = new Map<string, number>()
+  const marked = new Set<string>()
+  const helpers = (window as NavigationMilestoneWindow).__navigationMilestoneHelpers!
+  let started: number | undefined
+  let running = true
 
   const sample = () => {
     if (!running || started === undefined) return
@@ -121,14 +144,16 @@ function setupNavigationMilestoneTracking(input: {
     requestAnimationFrame(() => {
       setTimeout(() => {
         if (!running || started === undefined) return
-        const current = getCurrentMilestones()
+        const current = helpers.getCurrentMilestones(input.milestones)
 
         samples.push({
           observedAtMs: performance.now() - started,
           milestones: current,
         })
-        updateMilestoneStreaks(current)
-        updateAllMilestoneMarks(current)
+        Object.entries(current).forEach(([name, value]) => {
+          helpers.updateMilestoneStreak({ name, value, streaks, marked })
+        })
+        helpers.updateAllMilestoneMarks({ current, streaks, marked })
         sample()
       }, 0)
     })
@@ -144,7 +169,7 @@ function setupNavigationMilestoneTracking(input: {
     },
     { capture: true, once: true },
   )
-  ;(window as Window & { __navigationMilestones?: NavigationMilestoneProbe }).__navigationMilestones = {
+  ;(window as NavigationMilestoneWindow).__navigationMilestones = {
     samples,
     stop: () => {
       running = false
